@@ -1,0 +1,91 @@
+#!/bin/sh
+# My system IP/set ip address of server
+SERVER_IP="IPV4-IP"
+SERVER6_IP="IPV6-IP"
+DNS_SERVER="DNSIP1 DNSIP2 DNSIP3"
+
+# Flushing all rules
+iptables -F
+iptables -X
+ip6tables -F
+ip6tables -X
+
+# Setting default filter policy
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+iptables -P FORWARD DROP
+ip6tables -P INPUT DROP
+ip6tables -P OUTPUT DROP
+ip6tables -P FORWARD DROP
+
+# Allow unlimited traffic on loopback
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+ip6tables -A INPUT -i lo -j ACCEPT
+ip6tables -A OUTPUT -o lo -j ACCEPT
+
+# IPset rules
+ipset destroy china
+ipset destroy russia
+source ./china
+source ./russia
+iptables -A INPUT -m set --match-set china src -j DROP
+iptables -A INPUT -m set --match-set russia src -j DROP
+iptables -A OUTPUT -m set --match-set china src -j DROP
+iptables -A OUTPUT -m set --match-set russia src -j DROP
+
+# Standard checks (SYN/Fragment/XMas/Null)
+iptables -A INPUT -p tcp ! --syn -m state --state NEW -j DROP
+iptables -A INPUT -f -j DROP
+iptables -A INPUT -p tcp --tcp-flags ALL ALL -j DROP
+iptables -A INPUT -p tcp --tcp-flags ALL NONE -j DROP
+ip6tables -A INPUT -p tcp ! --syn -m state --state NEW -j DROP
+ip6tables -A INPUT -p tcp --tcp-flags ALL ALL -j DROP
+ip6tables -A INPUT -p tcp --tcp-flags ALL NONE -j DROP
+ 
+# Allow ICMP (both in/out)
+iptables -A INPUT -p icmp --icmp-type 8 -s 0/0 -d $SERVER_IP -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -p icmp --icmp-type 0 -s 0/0 -d $SERVER_IP -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -p icmp --icmp-type 0 -s $SERVER_IP -d 0/0 -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -p icmp --icmp-type 8 -s $SERVER_IP -d 0/0 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+
+# Allow incoming SSH 
+iptables -A INPUT -p tcp -s 0/0 -d $SERVER_IP --sport 513:65535 --dport 22 -m state --state NEW,ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -p tcp -s $SERVER_IP -d 0/0 --sport 22 --dport 513:65535 -m state --state ESTABLISHED -j ACCEPT
+ip6tables -A INPUT -p tcp -s 0/0 -d $SERVER6_IP --sport 513:65535 --dport 22 -m state --state NEW,ESTABLISHED -j ACCEPT
+ip6tables -A OUTPUT -p tcp -s $SERVER6_IP -d 0/0 --sport 22 --dport 513:65535 -m state --state ESTABLISHED -j ACCEPT
+
+# Allow outgoing DNS requests to Linode DNS
+for ip in $DNS_SERVER
+do
+iptables -A OUTPUT -p udp -s $SERVER_IP --sport 1024:65535 -d $ip --dport 53 -m state --state NEW,ESTABLISHED -j ACCEPT
+iptables -A INPUT -p udp -s $ip --sport 53 -d $SERVER_IP --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -p tcp -s $SERVER_IP --sport 1024:65535 -d $ip --dport 53 -m state --state NEW,ESTABLISHED -j ACCEPT
+iptables -A INPUT -p tcp -s $ip --sport 53 -d $SERVER_IP --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+done
+
+# Allow incoming HTTP/HTTPS
+iptables -A INPUT -p tcp -s 0/0 --sport 1024:65535 -d $SERVER_IP --dport 80 -m state --state NEW,ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -p tcp -s $SERVER_IP --sport 80 -d 0/0 --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+iptables -A INPUT -p tcp -s 0/0 --sport 1024:65535 -d $SERVER_IP --dport 443 -m state --state NEW,ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -p tcp -s $SERVER_IP --sport 443 -d 0/0 --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+ip6tables -A INPUT -p tcp -s 0/0 --sport 1024:65535 -d $SERVER6_IP --dport 80 -m state --state NEW,ESTABLISHED -j ACCEPT
+ip6tables -A OUTPUT -p tcp -s $SERVER6_IP --sport 80 -d 0/0 --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+ip6tables -A INPUT -p tcp -s 0/0 --sport 1024:65535 -d $SERVER6_IP --dport 443 -m state --state NEW,ESTABLISHED -j ACCEPT
+ip6tables -A OUTPUT -p tcp -s $SERVER6_IP --sport 443 -d 0/0 --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+
+# Allow outgoing HTTP/HTTPS
+iptables -A OUTPUT -p tcp -s $SERVER_IP --sport 1024:65535 -d 0/0 --dport 80 -m state --state NEW,ESTABLISHED -j ACCEPT
+iptables -A INPUT -p tcp -s 0/0 --sport 80 -d $SERVER_IP --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -p tcp -s $SERVER_IP --sport 1024:65535 -d 0/0 --dport 443 -m state --state NEW,ESTABLISHED -j ACCEPT
+iptables -A INPUT -p tcp -s 0/0 --sport 443 -d $SERVER_IP --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+ip6tables -A OUTPUT -p tcp -s $SERVER6_IP --sport 1024:65535 -d 0/0 --dport 80 -m state --state NEW,ESTABLISHED -j ACCEPT
+ip6tables -A INPUT -p tcp -s 0/0 --sport 80 -d $SERVER6_IP --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+ip6tables -A OUTPUT -p tcp -s $SERVER6_IP --sport 1024:65535 -d 0/0 --dport 443 -m state --state NEW,ESTABLISHED -j ACCEPT
+ip6tables -A INPUT -p tcp -s 0/0 --sport 443 -d $SERVER6_IP --dport 1024:65535 -m state --state ESTABLISHED -j ACCEPT
+
+# make sure nothing comes or goes out of this box
+iptables -A INPUT -j DROP
+iptables -A OUTPUT -j DROP
+ip6tables -A INPUT -j DROP
+ip6tables -A OUTPUT -j DROP
